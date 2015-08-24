@@ -1,0 +1,150 @@
+---
+title: 'Practical Machine Learning: Exercise prediction'
+author: "Tim T."
+output: html_document
+---
+
+## Data Description
+* Data was obtained from the Human Activity Recognition project. For more information, please see this [link] (http://groupware.les.inf.puc-rio.br/har).
+
+```{r, echo=FALSE}
+require(caret)
+require(dplyr)
+```
+
+## Load the training and tests data sets from local CSV files
+
+```{r, echo=FALSE}
+setwd("C:/Users/timt/Documents/DataScience/PracticalMachineLearning/Project/data")
+```
+
+## Data Processing and Feature Selection
+
+1. After downloading data to local file system, the data was imported into R using the following:
+
+```{r, echo=TRUE}
+## Load training data
+setwd("C:/Users/timt/Documents/DataScience/PracticalMachineLearning/Project/data")
+training <- read.csv("pml-training.csv", header=TRUE, row.names = 1, stringsAsFactors = FALSE)
+## Load testing data
+testing <- read.csv("pml-testing.csv", header=TRUE, row.names = 1, stringsAsFactors = FALSE)
+```
+
+2. Since the all factor variables were imported as character type, the "classe" variable was converted into factor variables.
+
+```{r, echo=TRUE}
+## Convert "classe" (the outcome variable) to a factor variable in both data sets
+training$classe <- as.factor(training$classe)
+```
+
+3. Next, variables were visually analyzed to determine which needed to be exluded from predictors used for predictive model.  To verify visual analysis, the code was run below to see which columns contained mostly NA values.
+```{r, echo=TRUE}
+ignoreNAs <- apply(!is.na(training),2,sum) >= nrow(training)
+dimnames(training[,ignoreNAs])[[2]]
+```
+
+* After this analysis, the preceding code was used for feature selection:
+
+```{r, echo=FALSE}
+## Get column names and and ordered by name for easier analysis
+## This was used to decide which predictors to include in final training model
+colNames <- colnames(training)
+
+## After visual analysis of the data, excluded columns composed of mostly NA values
+## To avoid creating a massive vector of column names, I used a vector of strings 
+## to match to the beginning of the column name in the data set
+predictor.variables <- c("^accel", "^gyros", "^magnet", "^pitch", "^roll", "^yaw","^total")
+## Match Column names to find all predictor (feature) variables
+matches <- unique(grep(paste0(predictor.variables, collapse="|"), colNames, value=TRUE))
+## Add back the outcome variable (classe) - this would have been excluded if I were to use PCA for feature selection
+matches <- c(matches, "classe")
+```
+
+4. Slice training data into training and test subsets - 70% traning and 30% testing.
+
+```{r, echo=TRUE}
+## Slice training data into training and test subsets
+inTrain <- createDataPartition(y=training$classe, p=0.70, list = FALSE)
+rawRfTrain <- training[inTrain,]
+rawRfTest <- training[-inTrain,]
+
+## Only include selected features/predictors and outcome variable in training and test subsets
+rfTrain <- rawRfTrain[,matches]
+rfTest <- rawRfTest[,matches]
+```
+
+5. Since the prediction (outcome) variable in this case is a multiclass variable, the Random Forest algorithm was chosen for predition.  Below is the code for creation of the model using set.seed to keep results replicable model run instances.
+
+```{r}
+## Train model using "classe" as outcome and all other variables as predictors
+## Used 5-fold Cross Validation to train model (use parallel processing to speed up model training)
+set.seed(3433)
+modFit <- train(classe ~., data = rfTrain, method="rf", proxy=TRUE, 
+                trControl=trainControl(method="cv", number = 5), allowParallel = TRUE)
+
+## Side Note: Run time for RF model training was approximately 12 minutes on a 6 core, 3.33 GHz machine with 18 GB memory
+
+```
+
+6. The results from the model fit are shown below along with the confusion matrix which summarizes the success of the model over the training set.
+
+```{r, echo=TRUE}
+## Training model fit results
+modFit
+
+## Show model fit output and confusion matrix (how many right vs how many wrong per "classe" using model)
+print(modFit$finalModel)
+```
+
+## Results
+
+Using the trained model, we now apply the random forest model to the testing subset created in the steps above. Once again, we use a confusion matrix-like table to visualize the models accuracy.
+
+```{r}
+## Prediect new values using test subset that was created from the original training set
+pred <- predict(modFit, rfTest)
+rfTest$predRight <- pred==rfTest$classe
+
+## Table showing the number of correct and incorrect predictions for each classe
+table(pred, rfTest$classe)
+```
+
+Finally, we calculate the out of sample error - out of sample because we use the testing subset of the training data to verify the accuracy of the generated predictive model.
+
+```{r}
+## Out of sample error
+## Calculate accuracty by summing correct predtions divided by the total number of predictions
+accuracy <- nrow(rfTest[rfTest$predRight,]) / nrow(rfTest)
+## Calculate error by substracting error from 1
+error <- (1 - accuracy) * 100
+
+## Out of sample error percentage
+error
+```
+
+As shown above, the error is extremley low, just 0.75%, which means are model is very accurate. Further exploration may be need to ensure model is not overfitted.
+
+
+## Code testing against coursera problem set.
+
+#### Apply model to original test set
+matches <- unique(grep(paste0(predictor.variables, collapse="|"), colNames, value=TRUE))
+testPred <- predict(modFit, testing[,matches])
+testingPrediction <- testing
+
+#### Convert Factor "classe" to character
+testingPrediction$classe <- as.character(testPred)
+
+#### Ouput answers to dataframe with classe
+answers <- testingPrediction[,c("classe")]
+
+#### Function to create output files for each problem_id/classe answer
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers)
